@@ -68,6 +68,7 @@ function toUserSession(staff: StaffMember): UserSession {
     username: normalizedUsername,
     fullName: staff.fullName,
     role: resolveRoleLabel(staff.role),
+    roleCode: staff.role,
     avatar: staff.avatar || DEFAULT_AVATAR,
     id: staff.id,
     employeeCode,
@@ -120,6 +121,40 @@ function mapFirebaseLoginError(error: unknown): InternalAuthError {
   );
 }
 
+function canFallbackToInternalPassword(
+  staff: StaffMember,
+  password: string,
+  authError: unknown,
+): boolean {
+  if (staff.firebaseUid) {
+    return false;
+  }
+
+  if (!staff.password || staff.password !== password) {
+    return false;
+  }
+
+  const errorCode = getFirebaseAuthErrorCode(authError);
+  if (
+    errorCode === 'auth/invalid-credential' ||
+    errorCode === 'auth/invalid-login-credentials' ||
+    errorCode === 'auth/user-not-found' ||
+    errorCode === 'auth/wrong-password' ||
+    errorCode === 'auth/configuration-not-found' ||
+    errorCode === 'auth/operation-not-allowed' ||
+    errorCode === 'auth/invalid-api-key' ||
+    errorCode === 'auth/app-not-authorized'
+  ) {
+    return true;
+  }
+
+  if (authError instanceof Error && authError.message.includes('Firebase is not configured')) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function authenticateWithInternalStaff({
   username,
   password,
@@ -127,15 +162,22 @@ export async function authenticateWithInternalStaff({
   const normalizedUsername = normalizeUsername(username);
   const matchedStaff = await findStaffByUsernameOrThrow(normalizedUsername);
   const authEmail = resolveStaffAuthEmail(matchedStaff, normalizedUsername);
+  let usedInternalFallback = false;
 
   try {
     await signInWithFirebaseEmail(authEmail, password);
   } catch (error) {
-    throw mapFirebaseLoginError(error);
+    if (canFallbackToInternalPassword(matchedStaff, password, error)) {
+      usedInternalFallback = true;
+    } else {
+      throw mapFirebaseLoginError(error);
+    }
   }
 
   if (matchedStaff.status !== 'active') {
-    await signOutFirebaseSession();
+    if (!usedInternalFallback) {
+      await signOutFirebaseSession();
+    }
     throw new InternalAuthError('ACCOUNT_INACTIVE', 'Staff account is inactive.');
   }
 

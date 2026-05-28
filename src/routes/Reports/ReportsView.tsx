@@ -33,6 +33,10 @@ import { SOPIssue } from '../../types/issues.types';
 import { DailyReport } from '../../types/reports.types';
 import { TaskItem } from '../../types/tasks.types';
 import { KPIStats } from '../../types/today.types';
+import { reportsDailyService } from '../../services/reports-service';
+import { notificationsService } from '../../services/notifications-service';
+import { staffPermissionService } from '../../services/admin';
+import { MODULE_CODE } from '../../constants/staff-permissions.constants';
 import {
   Table,
   TableBody,
@@ -57,7 +61,7 @@ interface ReportsViewProps {
   checklistItems?: ChecklistItem[];
   tasks?: TaskItem[];
   issues?: SOPIssue[];
-  currentUser?: { fullName: string; role: string; avatar?: string } | null;
+  currentUser?: { fullName: string; role: string; roleCode?: string; username?: string; avatar?: string } | null;
 }
 
 interface SubmittedReport {
@@ -75,6 +79,20 @@ interface SubmittedReport {
   staffIssuesCount: number;
   notes: string;
   actor: string;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
+  createdAt?: string;
+  updatedAt?: string;
+  dateKey?: string;
+}
+
+interface ReportsPermissions {
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+function normalizeAccessCode(value?: string | null): string {
+  return (value || '').trim().toUpperCase();
 }
 
 export default function ReportsView({
@@ -99,8 +117,13 @@ export default function ReportsView({
     type: 'success'
   });
 
-  // Submitted historical reports in localStorage
+  // Submitted historical reports via API
   const [submittedReports, setSubmittedReports] = useState<SubmittedReport[]>([]);
+  const [permissions, setPermissions] = useState<ReportsPermissions>({
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+  });
 
   // Loading & Pagination states for user-facing transitions
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -117,72 +140,87 @@ export default function ReportsView({
   const liveComplaintsCount = stats?.customerComplaintsCount ?? 0;
   const liveUserIssues = stats?.lateStaffCount ?? 1;
 
-  // Sync state initially and pre-populate notes based on automatic metrics
+  // Load report permissions from staff permissions table
   useEffect(() => {
-    // Attempt load past reports
-    try {
-      const stored = localStorage.getItem('mrt_submitted_reports');
-      if (stored) {
-        setSubmittedReports(JSON.parse(stored));
-      } else {
-        // Initial mock historical logs
-        const initialMocks: SubmittedReport[] = [
-          {
-            id: 'rep-001',
-            timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toLocaleString('vi-VN'),
-            period: 'day',
-            status: 'green',
-            revenue: 28450000,
-            billCount: 236,
-            checklistPct: 92,
-            checklistRatio: '26/28',
-            delayedCount: 2,
-            sopErrorsCount: 1,
-            complaintsCount: 0,
-            staffIssuesCount: 1,
-            notes: 'Doanh thu đạt tốt nhưng có 2 việc trễ liên quan kho cần rà soát bàn giao ca chiều.',
-            actor: 'Nguyễn Minh Đức'
-          },
-          {
-            id: 'rep-002',
-            timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toLocaleString('vi-VN'),
-            period: 'day',
-            status: 'yellow',
-            revenue: 21500000,
-            billCount: 180,
-            checklistPct: 85,
-            checklistRatio: '24/28',
-            delayedCount: 4,
-            sopErrorsCount: 3,
-            complaintsCount: 1,
-            staffIssuesCount: 2,
-            notes: 'Ghi nhận lỗi SOP chấm công của ca sáng và một ca trễ xử lý khiếu nại đổi trả máy cũ.',
-            actor: 'Hoàng Thùy Linh'
-          },
-          {
-            id: 'rep-003',
-            timestamp: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleString('vi-VN'),
-            period: 'week',
-            status: 'green',
-            revenue: 195450000,
-            billCount: 1450,
-            checklistPct: 98,
-            checklistRatio: '188/192',
-            delayedCount: 1,
-            sopErrorsCount: 0,
-            complaintsCount: 0,
-            staffIssuesCount: 0,
-            notes: 'Tổng kết tuần vận hành xuất sắc. Doanh số vượt chỉ tiêu showroom đề ra.',
-            actor: 'Trương Quốc Anh'
-          }
-        ];
-        setSubmittedReports(initialMocks);
-        localStorage.setItem('mrt_submitted_reports', JSON.stringify(initialMocks));
+    let cancelled = false;
+
+    const loadPermissions = async () => {
+      try {
+        const allPermissions = await staffPermissionService.getAll();
+        if (cancelled) {
+          return;
+        }
+
+        const roleCode = normalizeAccessCode(currentUser?.roleCode || currentUser?.role);
+        const reportsPermRow = allPermissions.find(
+          (permission) =>
+            normalizeAccessCode(permission.module) === MODULE_CODE.BAO_CAO &&
+            normalizeAccessCode(permission.roleCode) === roleCode,
+        );
+
+        if (!reportsPermRow && (currentUser?.role?.toLowerCase().includes('chủ') || currentUser?.username === 'admin')) {
+          setPermissions({ canCreate: true, canUpdate: true, canDelete: true });
+          return;
+        }
+
+        setPermissions({
+          canCreate: !!reportsPermRow?.canCreate,
+          canUpdate: !!reportsPermRow?.canUpdate,
+          canDelete: !!reportsPermRow?.canDelete,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Không thể tải quyền báo cáo:', error);
+        }
       }
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
+    };
+
+    void loadPermissions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.fullName, currentUser?.role]);
+
+  // Load submitted reports from API
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadReports = async () => {
+      try {
+        const allReports = await reportsDailyService.getAll();
+        if (cancelled) {
+          return;
+        }
+
+        const currentStoreId = dailyReport.storeId;
+        const scoped = (allReports || [])
+          .filter((item) => item.storeId === currentStoreId)
+          .sort((a, b) => {
+            const timeA = a.updatedAt || a.createdAt || a.timestamp || '';
+            const timeB = b.updatedAt || b.createdAt || b.timestamp || '';
+            return timeA < timeB ? 1 : -1;
+          })
+          .map((item) => ({
+            ...item,
+            timestamp: item.timestamp || new Date(item.createdAt || Date.now()).toLocaleString('vi-VN'),
+          }));
+
+        setSubmittedReports(scoped);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Không thể tải danh sách báo cáo:', error);
+          triggerToast('Không thể tải lịch sử báo cáo từ hệ thống.', 'error');
+        }
+      }
+    };
+
+    void loadReports();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dailyReport.storeId]);
 
   // Pre-populate report state based on active issues
   useEffect(() => {
@@ -233,8 +271,13 @@ export default function ReportsView({
     }, 600);
   };
 
-  const handleSendReport = (e: React.FormEvent) => {
+  const handleSendReport = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!permissions.canCreate && !permissions.canUpdate) {
+      triggerToast('Bạn không có quyền gửi báo cáo phê duyệt.', 'error');
+      return;
+    }
     
     const actorName = currentUser?.fullName || 'Nguyễn Minh Đức';
     const dateObj = new Date();
@@ -247,6 +290,8 @@ export default function ReportsView({
     const totalBills = reportTab === 'day' ? 236 : reportTab === 'week' ? 1450 : 6210;
     const revVal = reportTab === 'day' ? 28450000 : reportTab === 'week' ? 198300000 : 850400000;
 
+    const nowIso = new Date().toISOString();
+    const dateKey = nowIso.slice(0, 10);
     const newReport: SubmittedReport = {
       id: `rep-${Date.now()}`,
       timestamp: `${dayLabel} lúc ${timeLabel}`,
@@ -261,28 +306,101 @@ export default function ReportsView({
       complaintsCount: liveComplaintsCount,
       staffIssuesCount: liveUserIssues,
       notes: notes || 'Hệ thống ghi nhận hoạt động bình thường, không có phát sinh sự cố đặc biệt.',
-      actor: actorName
+      actor: actorName,
+      approvalStatus: 'pending',
+      dateKey,
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
 
-    const nextList = [newReport, ...submittedReports];
-    setSubmittedReports(nextList);
-    localStorage.setItem('mrt_submitted_reports', JSON.stringify(nextList));
+    try {
+      const currentStoreId = dailyReport.storeId;
+      const isDaily = reportTab === 'day';
+      const existingDaily = isDaily
+        ? submittedReports.find((item) => item.period === 'day' && item.dateKey === dateKey)
+        : undefined;
+
+      let saved: SubmittedReport;
+      if (existingDaily) {
+        if (!permissions.canUpdate) {
+          triggerToast('Bạn không có quyền cập nhật báo cáo ngày hiện tại.', 'error');
+          return;
+        }
+        const updated = await reportsDailyService.update(existingDaily.id, {
+          ...newReport,
+          storeId: currentStoreId,
+          updatedAt: nowIso,
+        });
+        saved = {
+          ...existingDaily,
+          ...updated,
+          timestamp: updated.timestamp || newReport.timestamp,
+        };
+      } else {
+        const created = await reportsDailyService.create({
+          ...newReport,
+          storeId: currentStoreId,
+        });
+        saved = {
+          ...newReport,
+          ...created,
+          timestamp: created.timestamp || newReport.timestamp,
+        };
+      }
+
+      const nextList = [saved, ...submittedReports.filter((item) => item.id !== saved.id)];
+      setSubmittedReports(nextList);
+
+      try {
+        await notificationsService.create({
+          storeId: currentStoreId,
+          title: `Báo cáo ${reportTab === 'day' ? 'cuối ngày' : reportTab === 'week' ? 'tuần' : 'tháng'} gửi duyệt`,
+          type: 'can_duyet',
+          typeLabel: 'CẦN DUYỆT',
+          requester: actorName,
+          role: currentUser?.role || 'Nhân sự vận hành',
+          approver: 'Quản lý cửa hàng',
+          status: 'pending',
+          sourceModule: 'REPORTS',
+          sourceId: saved.id,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+      } catch (notifyError) {
+        console.error('Không thể bắn thông báo realtime cho báo cáo:', notifyError);
+      }
+    } catch (error) {
+      console.error('Không thể gửi báo cáo:', error);
+      triggerToast('Không thể gửi báo cáo phê duyệt. Vui lòng thử lại.', 'error');
+      return;
+    }
 
     // Reset pagination to page 1 and trigger skeleton load transition
     setIsLoading(true);
     setCurrentPage(1);
     setTimeout(() => {
       setIsLoading(false);
-      triggerToast('🚀 Báo cáo điều hành đã gửi và đồng bộ lên Hệ Thống POS Cloud thành công!', 'success');
+      triggerToast('🚀 Báo cáo điều hành đã gửi phê duyệt và đồng bộ lên hệ thống thành công!', 'success');
     }, 550);
   };
 
-  const handleDeleteReport = (id: string, e: React.MouseEvent) => {
+  const handleDeleteReport = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!permissions.canDelete) {
+      triggerToast('Bạn không có quyền xóa báo cáo.', 'error');
+      return;
+    }
     if (window.confirm('Bạn có chắc chắn muốn xóa lưu trữ báo cáo lịch sử này?')) {
+      try {
+        await reportsDailyService.delete(id);
+      } catch (error) {
+        console.error('Không thể xóa báo cáo:', error);
+        triggerToast('Không thể xóa báo cáo trên hệ thống.', 'error');
+        return;
+      }
+
       const nextList = submittedReports.filter(r => r.id !== id);
       setSubmittedReports(nextList);
-      localStorage.setItem('mrt_submitted_reports', JSON.stringify(nextList));
 
       // Trigger a quick skeleton load transition
       setIsLoading(true);
@@ -673,6 +791,7 @@ export default function ReportsView({
               <button
                 type="button"
                 onClick={handleSaveDraft}
+                disabled={!permissions.canCreate && !permissions.canUpdate}
                 className="flex items-center justify-center gap-2 py-3.5 px-4 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-extrabold uppercase tracking-wider rounded-2xl transition-all cursor-pointer shadow-xs active:scale-[0.99]"
               >
                 <Bookmark className="w-4 h-4 text-slate-500" />
@@ -682,6 +801,7 @@ export default function ReportsView({
               {/* Send primary button */}
               <button
                 type="submit"
+                disabled={!permissions.canCreate && !permissions.canUpdate}
                 className="flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-red-600 to-[#C21A1A] hover:bg-[#C21A1A]/95 text-white text-xs font-black uppercase tracking-wider rounded-2xl transition-all cursor-pointer shadow-md shadow-red-900/10 active:scale-[0.99]"
               >
                 <Send className="w-4 h-4 text-red-100" />

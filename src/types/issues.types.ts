@@ -11,4 +11,13 @@ export interface SOPIssue {
   process?: string;
   occurrence?: number;
   assignee?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  readConfirmedAt?: string;
+  readConfirmedBy?: string;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
+  submittedAt?: string;
+  submittedBy?: string;
+  approvedAt?: string;
+  approvedBy?: string;
 }

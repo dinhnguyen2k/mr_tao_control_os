@@ -3,6 +3,8 @@ import type { HttpClient } from '../shared/services/create-base-service';
 import { KNOWN_RESOURCE_PATHS } from '../constants/resource-paths';
 import { getFirestoreDb } from './firebase-config';
 
+const RESOURCE_PATHS_BY_SPECIFICITY = [...KNOWN_RESOURCE_PATHS].sort((a, b) => b.length - a.length);
+
 function normalizePath(path: string): string {
   const withoutQuery = path.split('?')[0]?.split('#')[0] ?? '';
   const trimmed = withoutQuery.replace(/^\/+|\/+$/g, '');
@@ -19,7 +21,7 @@ function toCollectionName(resourcePath: string): string {
 function resolveResourceAndDocId(path: string): { resource: string; docId: string | null } {
   const normalizedPath = normalizePath(path);
 
-  for (const resource of KNOWN_RESOURCE_PATHS) {
+  for (const resource of RESOURCE_PATHS_BY_SPECIFICITY) {
     if (normalizedPath === resource) {
       return { resource, docId: null };
     }

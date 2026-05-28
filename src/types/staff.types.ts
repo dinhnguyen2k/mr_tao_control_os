@@ -3,6 +3,7 @@ export interface StaffMember {
   storeId: string;
   fullName: string;
   role: string;
+  roleId?: string;
   username: string;
   usernameNormalized?: string;
   authEmail?: string;
@@ -22,6 +23,7 @@ export interface StaffMember {
 export interface RolePermissionRow {
   id: string;
   storeId: string;
+  roleId?: string;
   roleCode: string;
   module: string;
   canView: boolean;
@@ -29,4 +31,12 @@ export interface RolePermissionRow {
   canUpdate: boolean;
   canDelete: boolean;
   canApprove: boolean;
+}
+
+export interface StaffRole {
+  id: string;
+  storeId: string;
+  code: string;
+  name: string;
+  status: 'active' | 'inactive';
 }

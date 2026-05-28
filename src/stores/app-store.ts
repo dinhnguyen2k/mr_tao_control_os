@@ -5,6 +5,7 @@ export interface UserSession {
   username: string;
   fullName: string;
   role: string;
+  roleCode?: string;
   avatar?: string;
   id?: string;
   employeeCode?: string;
@@ -18,6 +19,38 @@ export interface UserSession {
 
 const SESSION_STORAGE_KEY = 'mrt_user_session';
 const SESSION_TTL_MS = 30 * 60 * 1000;
+const KNOWN_ROLE_CODES = new Set([
+  'CHU_CUA_HANG',
+  'QUAN_LY',
+  'SALES',
+  'KHO',
+  'CSKH',
+  'QUAN_TRI_VIEN',
+]);
+const DEFAULT_ROLE_CODE_BY_USERNAME: Record<string, string> = {
+  admin: 'CHU_CUA_HANG',
+  manager: 'QUAN_LY',
+  sales: 'SALES',
+  tech: 'KHO',
+  cskh: 'CSKH',
+};
+
+function resolveRoleCode(user: Partial<UserSession>, legacyUser: Record<string, unknown>, username: string): string {
+  const explicitRoleCode =
+    (typeof user.roleCode === 'string' ? user.roleCode : undefined) ||
+    (typeof legacyUser.roleCode === 'string' ? legacyUser.roleCode : undefined);
+  const normalizedExplicit = explicitRoleCode?.trim().toUpperCase();
+  if (normalizedExplicit) {
+    return normalizedExplicit;
+  }
+
+  const normalizedRole = user.role?.trim().toUpperCase();
+  if (normalizedRole && KNOWN_ROLE_CODES.has(normalizedRole)) {
+    return normalizedRole;
+  }
+
+  return DEFAULT_ROLE_CODE_BY_USERNAME[username] ?? 'SALES';
+}
 
 export function enrichSessionWithDefaultFields(user: Partial<UserSession> | null): UserSession {
   const legacyUser = (user ?? {}) as Record<string, unknown>;
@@ -27,6 +60,7 @@ export function enrichSessionWithDefaultFields(user: Partial<UserSession> | null
       username: 'sales',
       fullName: 'Nguyen Van A',
       role: 'Nhan vien ban le',
+      roleCode: 'SALES',
       id: 'NV-002',
       employeeCode: 'MNS-002',
       phone: '0987654321',
@@ -58,11 +92,13 @@ export function enrichSessionWithDefaultFields(user: Partial<UserSession> | null
         : username === 'tech'
           ? 'Ky thuat vien'
           : 'Quan ly cua hang');
+  const roleCode = resolveRoleCode(user, legacyUser, username);
 
   return {
     username,
     fullName,
     role,
+    roleCode,
     avatar:
       user.avatar ||
       (username === 'admin'

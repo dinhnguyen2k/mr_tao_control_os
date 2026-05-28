@@ -5,6 +5,7 @@ export interface ChecklistCategory {
   countDone: number;
   countTotal: number;
   isCompleted: boolean;
+  categoryType?: 'today' | 'process';
 }
 
 export interface ChecklistItem {
@@ -14,4 +15,15 @@ export interface ChecklistItem {
   title: string;
   isCompleted: boolean;
   timeSlot?: string;
+  timeLimit?: string;
+  roleCode?: string;
+  dateKey?: string;
+  isTemplate?: boolean;
+  checklistName?: string;
+  templateId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  checkedAt?: string;
+  checkedByName?: string;
+  checkedByUsername?: string;
 }

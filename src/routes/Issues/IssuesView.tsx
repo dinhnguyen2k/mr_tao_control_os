@@ -17,24 +17,46 @@ import {
   Layers,
   Sparkles,
   RefreshCw,
-  FolderOpen
+  FolderOpen,
+  Pencil
 } from 'lucide-react';
 import { SOPIssue } from '../../types/issues.types';
 
 interface IssuesViewProps {
   issues: SOPIssue[];
+  permissions: {
+    canCreate: boolean;
+    canUpdate: boolean;
+    canDelete: boolean;
+  };
   onAddIssue: (issue: Omit<SOPIssue, 'id' | 'storeId'>) => void;
+  onUpdateIssue: (issueId: string, updates: Partial<SOPIssue>) => void;
+  onDeleteIssue: (issueId: string) => void;
   onUpdateIssueStatus: (issueId: string, status: string) => void;
+  onConfirmIssueRead: (issueId: string) => void;
+  errorMessage?: string | null;
+  successMessage?: string | null;
+  onDismissError?: () => void;
+  onDismissSuccess?: () => void;
 }
 
 export default function IssuesView({
   issues,
+  permissions,
   onAddIssue,
-  onUpdateIssueStatus
+  onUpdateIssue,
+  onDeleteIssue,
+  onUpdateIssueStatus,
+  onConfirmIssueRead,
+  errorMessage,
+  successMessage,
+  onDismissError,
+  onDismissSuccess,
 }: IssuesViewProps) {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<'all' | 'sop_error' | 'exception' | 'risk' | 'improvement'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
 
   // Status Change Dropdown
   const [dropdownId, setDropdownId] = useState<string | null>(null);
@@ -49,6 +71,24 @@ export default function IssuesView({
   const [newOccurrence, setNewOccurrence] = useState(1);
   const [newAssignee, setNewAssignee] = useState('');
   const [newDesc, setNewDesc] = useState('');
+
+  const formatReadConfirmedAt = (value?: string) => {
+    if (!value) {
+      return '';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+
+    return date.toLocaleString('vi-VN', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: '2-digit',
+    });
+  };
 
   // Auto detect statuses for preset categories
   const handleCategoryChange = (cat: 'sop_error' | 'exception' | 'risk' | 'improvement') => {
@@ -87,31 +127,66 @@ export default function IssuesView({
     return titleMatch || actorMatch || descMatch || procMatch || assigneeMatch;
   });
 
-  // Handle addition submit
-  const handleSubmitNewIssue = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    onAddIssue({
-      title: newTitle.trim(),
-      severity: newSeverity,
-      status: newStatus,
-      category: newCategory,
-      date: new Date().toISOString().split('T')[0],
-      actor: newActor.trim() || 'Hệ thống ca trực',
-      process: newProcess.trim() || 'Vận hành chung',
-      occurrence: Number(newOccurrence) || 1,
-      assignee: newAssignee.trim() || 'Quản lý cửa hàng',
-      description: newDesc.trim()
-    });
-
-    // Reset Form fields
+  const resetIssueForm = () => {
     setNewTitle('');
+    setNewCategory('sop_error');
+    setNewSeverity('Medium');
+    setNewStatus('Xử lý ngay');
     setNewActor('');
     setNewProcess('');
     setNewOccurrence(1);
     setNewAssignee('');
     setNewDesc('');
+    setEditingIssueId(null);
+  };
+
+  const handleOpenEditIssue = (issue: SOPIssue) => {
+    setEditingIssueId(issue.id);
+    setNewTitle(issue.title || '');
+    setNewCategory(issue.category);
+    setNewSeverity(issue.severity);
+    setNewStatus(issue.status || 'Xử lý ngay');
+    setNewActor(issue.actor || '');
+    setNewProcess(issue.process || '');
+    setNewOccurrence(issue.occurrence || 1);
+    setNewAssignee(issue.assignee || '');
+    setNewDesc(issue.description || '');
+    setIsAdding(true);
+  };
+
+  // Handle addition/update submit
+  const handleSubmitNewIssue = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
+
+    if (editingIssueId) {
+      onUpdateIssue(editingIssueId, {
+        title: newTitle.trim(),
+        severity: newSeverity,
+        status: newStatus,
+        category: newCategory,
+        actor: newActor.trim() || 'Hệ thống ca trực',
+        process: newProcess.trim() || 'Vận hành chung',
+        occurrence: Number(newOccurrence) || 1,
+        assignee: newAssignee.trim() || 'Quản lý cửa hàng',
+        description: newDesc.trim(),
+      });
+    } else {
+      onAddIssue({
+        title: newTitle.trim(),
+        severity: newSeverity,
+        status: newStatus,
+        category: newCategory,
+        date: new Date().toISOString().split('T')[0],
+        actor: newActor.trim() || 'Hệ thống ca trực',
+        process: newProcess.trim() || 'Vận hành chung',
+        occurrence: Number(newOccurrence) || 1,
+        assignee: newAssignee.trim() || 'Quản lý cửa hàng',
+        description: newDesc.trim(),
+      });
+    }
+
+    resetIssueForm();
     setIsAdding(false);
   };
 
@@ -147,17 +222,54 @@ export default function IssuesView({
         </div>
 
         {/* Big Action button to log and add a new record */}
-        <button
-          onClick={() => {
-            handleCategoryChange('sop_error');
-            setIsAdding(true);
-          }}
-          className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-[#C21A1A] hover:bg-[#A31414] text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md cursor-pointer transition-all hover:-translate-y-0.5 active:translate-y-0 shrink-0 self-start md:self-auto"
-        >
-          <Plus className="w-4 h-4 stroke-[3]" />
-          <span>Ghi nhận phiếu phát sinh</span>
-        </button>
+        {permissions.canCreate && (
+          <button
+            onClick={() => {
+              resetIssueForm();
+              handleCategoryChange('sop_error');
+              setIsAdding(true);
+            }}
+            className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-[#C21A1A] hover:bg-[#A31414] text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md cursor-pointer transition-all hover:-translate-y-0.5 active:translate-y-0 shrink-0 self-start md:self-auto"
+          >
+            <Plus className="w-4 h-4 stroke-[3]" />
+            <span>Ghi nhận phiếu phát sinh</span>
+          </button>
+        )}
       </div>
+
+      {errorMessage && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 flex items-start justify-between gap-3 animate-in slide-in-from-top-2 duration-200 shadow-2xs">
+          <div className="flex items-start gap-2.5 text-rose-700">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <p className="text-xs font-bold leading-relaxed">{errorMessage}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismissError}
+            className="text-rose-500 hover:text-rose-700 p-0.5 rounded transition-colors cursor-pointer"
+            title="Đóng thông báo lỗi"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-start justify-between gap-3 animate-in slide-in-from-top-2 duration-200 shadow-2xs">
+          <div className="flex items-start gap-2.5 text-emerald-700">
+            <Check className="w-4 h-4 mt-0.5 shrink-0" />
+            <p className="text-xs font-bold leading-relaxed">{successMessage}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismissSuccess}
+            className="text-emerald-500 hover:text-emerald-700 p-0.5 rounded transition-colors cursor-pointer"
+            title="Đóng thông báo"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* 2B. TOP METRIC BENTO CARDS SYSTEM (4 Main Columns from Mockup Template) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -426,6 +538,16 @@ export default function IssuesView({
                     </p>
                   )}
 
+                  {issue.readConfirmedAt && (
+                    <div className="mt-2 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md px-2 py-1 inline-flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>
+                        Đã xác nhận đọc lúc {formatReadConfirmedAt(issue.readConfirmedAt)}
+                        {issue.readConfirmedBy ? ` bởi ${issue.readConfirmedBy}` : ''}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Sub Grid Panel (Exact Three columns translation from phone design) */}
                   <div className="grid grid-cols-3 gap-2 border-y border-slate-100 py-3 my-4 text-xs font-sans">
                     <div className="space-y-0.5">
@@ -458,16 +580,41 @@ export default function IssuesView({
                   </div>
 
                   {/* Operational status toggle conforming to beautiful system layout state popup */}
-                  <div className="relative shrink-0 text-right">
+                  <div className="relative shrink-0 text-right flex items-center gap-1.5">
+                    {permissions.canUpdate && (
+                      <button
+                        onClick={() => handleOpenEditIssue(issue)}
+                        className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 cursor-pointer"
+                        title="Chỉnh sửa phiếu"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {permissions.canDelete && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Bạn có chắc chắn muốn xóa phiếu "${issue.title}"?`)) {
+                            onDeleteIssue(issue.id);
+                          }
+                        }}
+                        className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                        title="Xóa phiếu"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
                     <button 
+                      disabled={!permissions.canUpdate}
                       onClick={() => setDropdownId(dropdownId === issue.id ? null : issue.id)}
-                      className={`px-4 py-2 font-black text-xs uppercase tracking-wider rounded-xl cursor-pointer duration-150 inline-flex items-center gap-1 hover:-translate-y-0.5 active:translate-y-0 shadow-2xs ${actionBtnStyle}`}
+                      className={`px-4 py-2 font-black text-xs uppercase tracking-wider rounded-xl duration-150 inline-flex items-center gap-1 shadow-2xs ${permissions.canUpdate ? `cursor-pointer hover:-translate-y-0.5 active:translate-y-0 ${actionBtnStyle}` : 'cursor-not-allowed opacity-50 border border-slate-200 text-slate-400 bg-slate-50'}`}
                     >
                       <span>{issue.status}</span>
                       <ChevronRight className="w-3.5 h-3.5 rotate-90 stroke-[3.5]" />
                     </button>
 
-                    {dropdownId === issue.id && (
+                    {permissions.canUpdate && dropdownId === issue.id && (
                       <div className="absolute right-0 bottom-full mb-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl z-30 py-2 text-xs text-left animate-in fade-in slide-in-from-bottom-2 duration-150">
                         <p className="px-3 py-1 font-black text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-50 mb-1">Cập nhật xử lý</p>
                         
@@ -502,6 +649,14 @@ export default function IssuesView({
                           <span>Đã xử lý (Bộ lưu trữ)</span>
                           {issue.status === 'Đã xử lý' && <Check className="w-4 h-4 text-slate-600 stroke-[3]" />}
                         </button>
+
+                        <button
+                          onClick={() => { onConfirmIssueRead(issue.id); setDropdownId(null); }}
+                          className="w-full px-3 py-2 text-left hover:bg-emerald-50 flex items-center justify-between text-emerald-600 font-bold"
+                        >
+                          <span>Xác nhận đã đọc</span>
+                          {issue.readConfirmedAt && <Check className="w-4 h-4 text-emerald-600 stroke-[3]" />}
+                        </button>
                       </div>
                     )}
                   </div>
@@ -522,10 +677,13 @@ export default function IssuesView({
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
               <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-red-600 animate-pulse" />
-                Ghi Nhận Thực Tế Sự Cố / Cải Tiến mới
+                {editingIssueId ? 'Chỉnh sửa phiếu phát sinh' : 'Ghi Nhận Thực Tế Sự Cố / Cải Tiến mới'}
               </h3>
               <button 
-                onClick={() => setIsAdding(false)}
+                onClick={() => {
+                  setIsAdding(false);
+                  resetIssueForm();
+                }}
                 className="text-slate-400 hover:text-slate-600 font-bold text-xs bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg cursor-pointer"
               >
                 Đóng ✕
@@ -660,16 +818,20 @@ export default function IssuesView({
               <div className="flex gap-2.5 justify-end pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsAdding(false)}
+                  onClick={() => {
+                    setIsAdding(false);
+                    resetIssueForm();
+                  }}
                   className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-150 rounded-xl"
                 >
                   Hủy bỏ
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 text-xs font-black text-white bg-[#C21A1A] hover:bg-[#971212] rounded-xl shadow-md cursor-pointer"
+                  disabled={editingIssueId ? !permissions.canUpdate : !permissions.canCreate}
+                  className="px-5 py-2.5 text-xs font-black text-white bg-[#C21A1A] hover:bg-[#971212] rounded-xl shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Ghi nhận vào hệ thống
+                  {editingIssueId ? 'Lưu cập nhật' : 'Ghi nhận vào hệ thống'}
                 </button>
               </div>
 

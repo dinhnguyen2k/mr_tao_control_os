@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Bell, 
   Check, 
-  X, 
   MessageSquare, 
   Plus, 
   Clock, 
@@ -15,16 +14,22 @@ import {
   Activity,
   AlertCircle,
   HelpCircle,
-  ThumbsUp,
   RotateCcw
 } from 'lucide-react';
+import { notificationsService, subscribeNotificationsRealtime } from '../../services/notifications-service';
+import type { AppNotification } from '../../types/notification.types';
+import { staffPermissionService } from '../../services/admin';
+import { MODULE_CODE } from '../../constants/staff-permissions.constants';
+import { useAppStore } from '../../stores/app-store';
 
 interface NotificationItem {
   id: string;
+  storeId?: string;
   title: string;
-  type: 'khân' | 'can_duyet' | 'nhac_viec' | 'canh_bao'; // khẩn, cần duyệt, nhắc việc, cảnh báo
+  type: 'khan' | 'can_duyet' | 'nhac_viec' | 'canh_bao';
   typeLabel: string;
-  time: string;
+  time?: string;
+  createdAt?: string;
   requester: string;
   role: string;
   approver: string;
@@ -34,94 +39,53 @@ interface NotificationItem {
   comments?: string;
 }
 
+interface NotificationPermissions {
+  canApprove: boolean;
+  canComment: boolean;
+  canCreateTask: boolean;
+}
+
+function formatRelativeTimeVi(iso?: string): string {
+  if (!iso) {
+    return 'Vừa xong';
+  }
+
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+
+  if (diffMin < 1) {
+    return 'Vừa xong';
+  }
+  if (diffMin < 60) {
+    return `${diffMin} phút trước`;
+  }
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) {
+    return `${diffHours} giờ trước`;
+  }
+  return date.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizeAccessCode(value?: string | null): string {
+  return (value || '').trim().toUpperCase();
+}
+
 export default function NotificationsView() {
+  const currentUser = useAppStore((state) => state.currentUser);
+
   // Tabs: 'all' (Tất cả), 'pending' (Chờ duyệt), 'resolved' (Đã xử lý)
   const [filterTab, setFilterTab] = useState<'all' | 'pending' | 'resolved'>('pending');
   // Secondary sub-filters to mimic the pill counts
   const [subFilter, setSubFilter] = useState<'all' | 'new' | 'needs_approval' | 'urgent' | 'processed'>('all');
 
-  // Interactive local states for notifications
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 'notif-1',
-      title: 'Ngoại lệ: Xuất máy trước khi đủ cọc',
-      type: 'khân',
-      typeLabel: 'KHẨN',
-      time: '09:12 Today',
-      requester: 'Sales ca chiều',
-      role: 'Nhân viên bán hàng',
-      approver: 'Chủ cửa hàng',
-      status: 'pending'
-    },
-    {
-      id: 'notif-2',
-      title: 'Duyệt banner khuyến mãi cuối tuần',
-      type: 'can_duyet',
-      typeLabel: 'CẦN DUYỆT',
-      time: '08:45 Today',
-      requester: 'Marketing',
-      role: 'Chuyên viên thương hiệu',
-      approver: 'Chủ cửa hàng',
-      status: 'pending'
-    },
-    {
-      id: 'notif-3',
-      title: 'Xác nhận hoàn thành checklist mở cửa',
-      type: 'nhac_viec',
-      typeLabel: 'NHẮC VIỆC',
-      time: '07:58 Today',
-      requester: 'Lê Văn C',
-      role: 'Trưởng ca sáng',
-      approver: 'Chủ cửa hàng',
-      evidence: true,
-      status: 'pending'
-    },
-    {
-      id: 'notif-4',
-      title: 'Thông báo tồn kho iPhone 11 dưới ngưỡng',
-      type: 'canh_bao',
-      typeLabel: 'CẢNH BÁO',
-      time: '07:20 Today',
-      requester: 'Kho: Cửa hàng 01',
-      role: 'Tự động từ ERP KiotViet',
-      approver: 'Quản lý cửa hàng',
-      status: 'pending'
-    },
-    {
-      id: 'notif-5',
-      title: 'Yêu cầu huỷ hoá đơn HD00293 đã lưu tạm',
-      type: 'can_duyet',
-      typeLabel: 'CẦN DUYỆT',
-      time: 'Hôm qua',
-      requester: 'Thu ngân Hồng Nhung',
-      role: 'Bộ phận thu ngân',
-      approver: 'Quản lý chi nhánh',
-      status: 'approved'
-    },
-    {
-      id: 'notif-6',
-      title: 'Chi phí phát sinh: Thay bóng đèn bảng hiệu',
-      type: 'nhac_viec',
-      typeLabel: 'NHẮC VIỆC',
-      time: 'Hôm qua',
-      requester: 'Bảo vệ ca đêm',
-      role: 'Nhân sự bảo an',
-      approver: 'Bộ phận HCNS',
-      evidence: true,
-      status: 'approved'
-    },
-    {
-      id: 'notif-7',
-      title: 'Báo cáo sự cố rò rỉ nước nhà vệ sinh',
-      type: 'khân',
-      typeLabel: 'KHẨN',
-      time: '2 ngày trước',
-      requester: 'Kỹ thuật viên ca trực',
-      role: 'Bộ phận kỹ thuật',
-      approver: 'Quản lý vận hành',
-      status: 'rejected'
-    }
-  ]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [permissions, setPermissions] = useState<NotificationPermissions>({
+    canApprove: false,
+    canComment: false,
+    canCreateTask: false,
+  });
 
   // Toast message states
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'danger' | 'info' }>({
@@ -141,57 +105,170 @@ export default function NotificationsView() {
   const [commentingId, setCommentingId] = useState<string | null>(null);
   const [tempCommentText, setTempCommentText] = useState('');
 
-  // Handle Approve Action
-  const handleApprove = (id: string) => {
-    setNotifications(prev => prev.map(notif => {
-      if (notif.id === id) {
-        triggerToast(`Đã PHÊ DUYỆT thành công: "${notif.title}"`, 'success');
-        return { ...notif, status: 'approved' };
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPermissions = async () => {
+      try {
+        const allPermissions = await staffPermissionService.getAll();
+        if (cancelled) {
+          return;
+        }
+
+        const roleCode = normalizeAccessCode(currentUser?.roleCode || currentUser?.role);
+        const sopPermission = allPermissions.find(
+          (permission) =>
+            normalizeAccessCode(permission.module) === MODULE_CODE.LOI_SOP &&
+            normalizeAccessCode(permission.roleCode) === roleCode,
+        );
+        const taskPermission = allPermissions.find(
+          (permission) =>
+            normalizeAccessCode(permission.module) === MODULE_CODE.GIAO_VIEC &&
+            normalizeAccessCode(permission.roleCode) === roleCode,
+        );
+
+        const owner = normalizeAccessCode(currentUser?.roleCode) === 'CHU_CUA_HANG' || currentUser?.username === 'admin';
+
+        setPermissions({
+          canApprove: owner || !!sopPermission?.canApprove || !!sopPermission?.canUpdate,
+          canComment: owner || !!sopPermission?.canUpdate,
+          canCreateTask: owner || !!taskPermission?.canCreate,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Không thể tải quyền thông báo:', error);
+        }
       }
-      return notif;
-    }));
+    };
+
+    void loadPermissions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.roleCode, currentUser?.role, currentUser?.username]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeNotificationsRealtime(
+      (items) => {
+        const sorted = (items || [])
+          .map((item) => ({
+            ...item,
+            type: (item.type === 'khan' ? 'khan' : item.type) as NotificationItem['type'],
+            time: formatRelativeTimeVi(item.createdAt),
+          }))
+          .sort((a, b) => {
+            const timeA = a.updatedAt || a.createdAt || '';
+            const timeB = b.updatedAt || b.createdAt || '';
+            return timeA < timeB ? 1 : -1;
+          });
+        setNotifications(sorted);
+      },
+      (error) => {
+        console.error('Không thể đồng bộ realtime Notifications:', error);
+      },
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const updateNotification = async (id: string, patch: Partial<AppNotification>) => {
+    await notificationsService.update(id, {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  // Handle Approve Action
+  const handleApprove = async (id: string) => {
+    if (!permissions.canApprove) {
+      triggerToast('Bạn không có quyền phê duyệt thông báo này.', 'danger');
+      return;
+    }
+
+    const target = notifications.find((item) => item.id === id);
+    try {
+      await updateNotification(id, { status: 'approved' });
+      triggerToast(`Đã PHÊ DUYỆT thành công: "${target?.title || 'Yêu cầu'}"`, 'success');
+    } catch (error) {
+      console.error('Không thể phê duyệt thông báo:', error);
+      triggerToast('Không thể phê duyệt. Vui lòng thử lại.', 'danger');
+    }
   };
 
   // Handle Reject Action
-  const handleReject = (id: string) => {
-    setNotifications(prev => prev.map(notif => {
-      if (notif.id === id) {
-        triggerToast(`Đã TỪ CHỐI yêu cầu: "${notif.title}"`, 'danger');
-        return { ...notif, status: 'rejected' };
-      }
-      return notif;
-    }));
+  const handleReject = async (id: string) => {
+    if (!permissions.canApprove) {
+      triggerToast('Bạn không có quyền từ chối thông báo này.', 'danger');
+      return;
+    }
+
+    const target = notifications.find((item) => item.id === id);
+    try {
+      await updateNotification(id, { status: 'rejected' });
+      triggerToast(`Đã TỪ CHỐI yêu cầu: "${target?.title || 'Yêu cầu'}"`, 'danger');
+    } catch (error) {
+      console.error('Không thể từ chối thông báo:', error);
+      triggerToast('Không thể từ chối. Vui lòng thử lại.', 'danger');
+    }
   };
 
   // Handle Comment Action (Feedback)
-  const submitComment = (id: string) => {
+  const submitComment = async (id: string) => {
+    if (!permissions.canComment) {
+      triggerToast('Bạn không có quyền phản hồi thông báo này.', 'danger');
+      return;
+    }
     if (!tempCommentText.trim()) return;
-    setNotifications(prev => prev.map(notif => {
-      if (notif.id === id) {
-        triggerToast(`Đã gửi góp ý phản hồi cho "${notif.requester}"`, 'info');
-        return { ...notif, status: 'commented', comments: tempCommentText };
-      }
-      return notif;
-    }));
+    const target = notifications.find((item) => item.id === id);
+    try {
+      await updateNotification(id, {
+        status: 'commented',
+        comments: tempCommentText,
+      });
+      triggerToast(`Đã gửi góp ý phản hồi cho "${target?.requester || 'nhân sự gửi'}"`, 'info');
+    } catch (error) {
+      console.error('Không thể gửi góp ý:', error);
+      triggerToast('Không thể gửi góp ý. Vui lòng thử lại.', 'danger');
+      return;
+    }
     setCommentingId(null);
     setTempCommentText('');
   };
 
   // Handle Quick Tasks Addition
-  const handleCreateTask = (id: string) => {
-    setNotifications(prev => prev.map(notif => {
-      if (notif.id === id) {
-        triggerToast(`Đã tạo nhiệm vụ thành công từ cảnh báo tồn kho!`, 'success');
-        return { ...notif, status: 'task_created' };
-      }
-      return notif;
-    }));
+  const handleCreateTask = async (id: string) => {
+    if (!permissions.canCreateTask) {
+      triggerToast('Bạn không có quyền tạo việc từ cảnh báo.', 'danger');
+      return;
+    }
+    try {
+      await updateNotification(id, { status: 'task_created' });
+      triggerToast('Đã tạo nhiệm vụ thành công từ cảnh báo tồn kho!', 'success');
+    } catch (error) {
+      console.error('Không thể tạo nhiệm vụ từ thông báo:', error);
+      triggerToast('Không thể tạo nhiệm vụ. Vui lòng thử lại.', 'danger');
+    }
   };
 
-  // Reset demo states
-  const handleReset = () => {
-    setNotifications(prev => prev.map(notif => ({ ...notif, status: notif.id.endsWith('5') || notif.id.endsWith('6') || notif.id.endsWith('7') ? 'approved' : 'pending' })));
-    triggerToast('Đã khôi phục trạng thái thử nghiệm!', 'info');
+  // Reload from API
+  const handleReset = async () => {
+    try {
+      const rows = await notificationsService.getAll();
+      setNotifications(
+        (rows || []).map((item) => ({
+          ...item,
+          type: (item.type === 'khan' ? 'khan' : item.type) as NotificationItem['type'],
+          time: formatRelativeTimeVi(item.createdAt),
+        })),
+      );
+      triggerToast('Đã làm mới danh sách thông báo realtime.', 'info');
+    } catch (error) {
+      console.error('Không thể làm mới Notifications:', error);
+      triggerToast('Không thể làm mới thông báo.', 'danger');
+    }
   };
 
   // Real-time calculated counters
@@ -199,9 +276,9 @@ export default function NotificationsView() {
   const totalResolved = notifications.filter(n => n.status !== 'pending').length;
   
   // Custom styled live dashboard badge values based on mock initial state overrides
-  const newCount = totalPending * 2; // Simulated relative count
-  const needsApprovalCount = notifications.filter(n => n.status === 'pending' && (n.type === 'can_duyet' || n.type === 'khân')).length;
-  const urgentCount = notifications.filter(n => n.status === 'pending' && n.type === 'khân').length;
+  const newCount = totalPending;
+  const needsApprovalCount = notifications.filter(n => n.status === 'pending' && (n.type === 'can_duyet' || n.type === 'khan')).length;
+  const urgentCount = notifications.filter(n => n.status === 'pending' && n.type === 'khan').length;
   const processedCount = notifications.filter(n => n.status !== 'pending').length;
 
   // Filter list based on main tab & sub pill selection
@@ -211,8 +288,8 @@ export default function NotificationsView() {
     if (filterTab === 'resolved' && notif.status === 'pending') return false;
 
     // 2. Second layer: Sub filters
-    if (subFilter === 'urgent' && notif.type !== 'khân') return false;
-    if (subFilter === 'needs_approval' && notif.type !== 'can_duyet' && notif.type !== 'khân') return false;
+    if (subFilter === 'urgent' && notif.type !== 'khan') return false;
+    if (subFilter === 'needs_approval' && notif.type !== 'can_duyet' && notif.type !== 'khan') return false;
     if (subFilter === 'new' && notif.status !== 'pending') return false;
     if (subFilter === 'processed' && notif.status === 'pending') return false;
 
@@ -337,7 +414,7 @@ export default function NotificationsView() {
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
             </div>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-lg font-black font-mono text-slate-800">8</span>
+              <span className="text-lg font-black font-mono text-slate-800">{newCount}</span>
               <span className="text-[9px] font-semibold text-slate-400">phiếu</span>
             </div>
           </button>
@@ -356,7 +433,7 @@ export default function NotificationsView() {
               <span className="w-4 h-4 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-bold">!</span>
             </div>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-lg font-black font-mono text-slate-800">4</span>
+              <span className="text-lg font-black font-mono text-slate-800">{needsApprovalCount}</span>
               <span className="text-[9px] font-semibold text-slate-400">cần duyệt</span>
             </div>
           </button>
@@ -375,7 +452,7 @@ export default function NotificationsView() {
               <span className="w-4 h-4 rounded-full bg-rose-100 text-[#C21A1A] flex items-center justify-center text-[10px] font-black">▲</span>
             </div>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-lg font-black font-mono text-[#C21A1A]">2</span>
+              <span className="text-lg font-black font-mono text-[#C21A1A]">{urgentCount}</span>
               <span className="text-[9px] font-semibold text-rose-400">khẩn cấp</span>
             </div>
           </button>
@@ -394,7 +471,7 @@ export default function NotificationsView() {
               <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[9px]">✔</span>
             </div>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-lg font-black font-mono text-emerald-800">15</span>
+              <span className="text-lg font-black font-mono text-emerald-800">{processedCount}</span>
               <span className="text-[9px] font-semibold text-emerald-400">xong</span>
             </div>
           </button>
@@ -416,7 +493,7 @@ export default function NotificationsView() {
               // Styling helper based on urgency type and level
               const typeStyle = () => {
                 switch (it.type) {
-                  case 'khân':
+                  case 'khan':
                     return {
                       border: 'border-l-3 border-l-rose-500 border-slate-200',
                       badge: 'bg-rose-50 text-rose-700 border-rose-250 text-[#C21A1A]',
@@ -540,16 +617,18 @@ export default function NotificationsView() {
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2 text-xs">
                       
                       {/* Exception: Red/Green style buttons */}
-                      {it.type === 'khân' && (
+                      {it.type === 'khan' && (
                         <>
                           <button 
                             onClick={() => handleReject(it.id)}
+                            disabled={!permissions.canApprove}
                             className="bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-800 border border-slate-200 rounded-lg px-3 py-1.5 font-black uppercase text-[10px] tracking-wider cursor-pointer transition-all active:scale-95"
                           >
                             Từ chối
                           </button>
                           <button 
                             onClick={() => handleApprove(it.id)}
+                            disabled={!permissions.canApprove}
                             className="bg-[#107c41] hover:bg-[#0e6b37] text-white rounded-lg px-3.5 py-1.5 font-black uppercase text-[10px] tracking-wider cursor-pointer transition-all flex items-center gap-1 shadow-xs active:scale-95"
                           >
                             <Check className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -589,6 +668,7 @@ export default function NotificationsView() {
                             <>
                               <button 
                                 onClick={() => { setCommentingId(it.id); setTempCommentText(''); }}
+                                disabled={!permissions.canComment}
                                 className="bg-white hover:bg-amber-50 text-amber-600 hover:text-amber-705 border border-amber-200 rounded-lg px-3 py-1.5 font-black uppercase text-[10px] tracking-wider cursor-pointer transition-all flex items-center gap-1 active:scale-95"
                               >
                                 <MessageSquare className="w-3.5 h-3.5" />
@@ -596,6 +676,7 @@ export default function NotificationsView() {
                               </button>
                               <button 
                                 onClick={() => handleApprove(it.id)}
+                                disabled={!permissions.canApprove}
                                 className="bg-[#107c41] hover:bg-[#0e6b37] text-white rounded-lg px-3.5 py-1.5 font-black uppercase text-[10px] tracking-wider cursor-pointer transition-all flex items-center gap-1 shadow-xs active:scale-95"
                               >
                                 <Check className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -617,6 +698,7 @@ export default function NotificationsView() {
                           </button>
                           <button 
                             onClick={() => handleApprove(it.id)}
+                            disabled={!permissions.canApprove}
                             className="bg-[#107c41] hover:bg-[#0e6b37] text-white rounded-lg px-3.5 py-1.5 font-black uppercase text-[10px] tracking-wider cursor-pointer transition-all flex items-center gap-1 shadow-xs active:scale-95"
                           >
                             <Check className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -630,6 +712,7 @@ export default function NotificationsView() {
                         <>
                           <button 
                             onClick={() => handleCreateTask(it.id)}
+                            disabled={!permissions.canCreateTask}
                             className="bg-white hover:bg-emerald-50 text-emerald-600 hover:text-emerald-705 border border-emerald-250 rounded-lg px-3 py-1.5 font-black uppercase text-[10px] tracking-wider cursor-pointer transition-all flex items-center gap-1 active:scale-95"
                           >
                             <Plus className="w-3.5 h-3.5 animate-pulse" />

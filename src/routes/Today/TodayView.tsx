@@ -43,7 +43,6 @@ export default function TodayView({
   completedChecklistsCount,
   totalChecklistsCount 
 }: TodayViewProps) {
-  const [storeStatus, setStoreStatus] = useState<'GREEN' | 'YELLOW' | 'RED'>('GREEN');
   const [currentDateString] = useState(() => {
     const d = new Date('2026-05-27T05:34:34Z');
     const days = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
@@ -63,103 +62,32 @@ export default function TodayView({
 
   return (
     <div className="space-y-3 text-left">
-      
-      {/* 1. WELCOME HEADER (MATCHING THE PHONE MOCKUP UPPER ZONE) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200">
-        <div>
-          <h1 className="text-xl font-black font-display tracking-tight text-slate-900 flex items-center gap-2">
-            Chào buổi sáng, Quản lý cửa hàng <span className="animate-bounce">👋</span>
-          </h1>
-          <p className="text-xs text-slate-400 font-medium mt-1">
-            Thứ Tư, Ngày 27 Tháng 5, 2026
-          </p>
-        </div>
-        
-        {/* Dynamic Sync state badge context */}
-        <span className="self-start sm:self-auto inline-flex items-center gap-1 px-2.5 py-1 text-[10px] uppercase tracking-wider font-extrabold bg-red-50 text-[#C21A1A] border border-red-100 rounded-lg">
-          <span className="w-1.5 h-1.5 bg-[#C21A1A] rounded-full animate-ping"></span>
-          Đang đồng bộ trực tiếp
-        </span>
-      </div>
 
       {/* 2. TRẠNG THÁI CỬA HÀNG (LABEL 1 IN SCREENSHOT) */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-black tracking-widest text-[#C21A1A] uppercase">TRẠNG THÁI CỬA HÀNG</span>
-          <span className="text-[10px] text-slate-400 font-semibold">Nhấn để cập nhật</span>
+          <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-[#C21A1A] rounded-full animate-ping"></span>
+            Đang đồng bộ
+          </span>
         </div>
 
-        {/* Highlight Main Status Card */}
-        <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 transition-all duration-300 ${
-          storeStatus === 'GREEN' 
-            ? 'bg-[#16C784]/10 border-[#16C784]/20 text-[#16C784]' 
-            : storeStatus === 'YELLOW'
-              ? 'bg-[#FFB800]/10 border-[#FFB800]/20 text-[#FFB800]'
-              : 'bg-[#C21A1A]/10 border-[#C21A1A]/20 text-[#C21A1A]'
-        }`}>
-          <div className="flex items-center gap-3.5">
-            <span className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm ${
-              storeStatus === 'GREEN' 
-                ? 'bg-[#16C784] text-white' 
-                : storeStatus === 'YELLOW'
-                  ? 'bg-[#FFB800] text-white'
-                  : 'bg-[#C21A1A] text-white'
-            }`}>
-              <Check className="w-5 h-5 stroke-[3]" />
-            </span>
+        {/* Highlight Main Status Card - Loading state */}
+        <div className="p-3.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+              <span className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></span>
+            </div>
             <div>
-              <h3 className="font-extrabold text-sm uppercase tracking-wide">
-                {storeStatus === 'GREEN' && 'XANH – VẬN HÀNH ỔN ĐỊNH'}
-                {storeStatus === 'YELLOW' && 'VÀNG – ĐANG KHẮC PHỤC LỖI'}
-                {storeStatus === 'RED' && 'ĐỎ – SỰ CỐ NGHIÊM TRỌNG'}
+              <h3 className="font-extrabold text-xs text-slate-700 uppercase tracking-wide">
+                Đang tải trạng thái vận hành...
               </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                {storeStatus === 'GREEN' && 'Hoạt động hiệu quả, duy trì phong độ!'}
-                {storeStatus === 'YELLOW' && 'Cần hoàn tất checklist vận hành muộn ngay.'}
-                {storeStatus === 'RED' && 'Một lỗi nghiêm trọng cần báo ban giám đốc.'}
+              <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                Hệ thống đang kết xuất dữ liệu thời gian thực từ Google Sheets
               </p>
             </div>
           </div>
-          <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-        </div>
-
-        {/* Interactive Segmented Control Selector */}
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          <button
-            onClick={() => setStoreStatus('GREEN')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-black uppercase transition-all border cursor-pointer ${
-              storeStatus === 'GREEN'
-                ? 'bg-[#16C784]/10 border-[#16C784]/45 text-[#16C784] shadow-xs'
-                : 'border-slate-150 text-slate-400 hover:bg-slate-50'
-            }`}
-          >
-            <span className="w-2.5 h-2.5 rounded-full bg-[#16C784] shrink-0"></span>
-            XANH
-          </button>
-          
-          <button
-            onClick={() => setStoreStatus('YELLOW')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-black uppercase transition-all border cursor-pointer ${
-              storeStatus === 'YELLOW'
-                ? 'bg-[#FFB800]/10 border-[#FFB800]/45 text-[#FFB800] shadow-xs'
-                : 'border-slate-150 text-slate-400 hover:bg-slate-50'
-            }`}
-          >
-            <span className="w-2.5 h-2.5 rounded-full bg-[#FFB800] shrink-0"></span>
-            VÀNG
-          </button>
-
-          <button
-            onClick={() => setStoreStatus('RED')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-black uppercase transition-all border cursor-pointer ${
-              storeStatus === 'RED'
-                ? 'bg-[#C21A1A]/10 border-[#C21A1A]/45 text-[#C21A1A] shadow-xs'
-                : 'border-slate-150 text-slate-400 hover:bg-slate-50'
-            }`}
-          >
-            <span className="w-2.5 h-2.5 rounded-full bg-[#C21A1A] shrink-0"></span>
-            ĐỎ
-          </button>
         </div>
       </div>
 

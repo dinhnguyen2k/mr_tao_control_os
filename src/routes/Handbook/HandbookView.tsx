@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { 
   Shield, 
   FileText, 
@@ -18,9 +18,17 @@ import {
   Info,
   Sparkles,
   HelpCircle,
-  FileCheck
+  FileCheck,
+  Plus,
+  Edit2,
+  Trash2,
+  X
 } from 'lucide-react';
-import { HANDBOOK_DOCS } from '../../data';
+import { MODULE_CODE } from '../../constants';
+import { useAppStore } from '../../stores/app-store';
+import { handbookService } from '../../services/handbook-service';
+import { staffPermissionService } from '../../services/admin';
+import type { HandbookDoc } from '../../types/handbook.types';
 import { ScrollArea } from '../../shared/components/scroll-area';
 
 interface UICardMetadata {
@@ -35,118 +43,256 @@ interface UICardMetadata {
   categoryKey: string;
 }
 
+interface HandbookDocWithMeta extends HandbookDoc {
+  meta: UICardMetadata;
+}
+
+interface HandbookFormState {
+  title: string;
+  category: string;
+  summary: string;
+  content: string;
+  requiredRead: boolean;
+  isUpdated: boolean;
+  driveLink: string;
+  categoryKey: string;
+}
+
+const OWNER_ROLE_CODES = new Set(['CHU_CUA_HANG', 'QUAN_TRI_VIEN']);
+
+function normalizeAccessCode(value?: string | null): string {
+  return (value || '').trim().toUpperCase();
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) {
+    return 'Chưa xác nhận';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Chưa xác nhận';
+  }
+
+  return date.toLocaleString('vi-VN', {
+    hour12: false,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function HandbookView() {
+  const currentUser = useAppStore((state) => state.currentUser);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'required' | 'updated'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  
-  // Local interaction states for marking documents read
-  const [readDocs, setReadDocs] = useState<Record<string, boolean>>({
-    'doc-5': true, // "Mô tả công việc" already marked as read
+  const [handbookDocs, setHandbookDocs] = useState<HandbookDoc[]>([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(false);
+  const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState({
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    canApprove: false,
   });
-  
-  // Toast notifications for user actions
+  const [isSavingDoc, setIsSavingDoc] = useState(false);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [formState, setFormState] = useState<HandbookFormState>({
+    title: '',
+    category: '',
+    summary: '',
+    content: '',
+    requiredRead: false,
+    isUpdated: false,
+    driveLink: '',
+    categoryKey: '',
+  });
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<number | null>(null);
 
   const showToast = (message: string) => {
+    if (toastTimeoutRef.current) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
     setToastMessage(message);
-    setTimeout(() => {
+    toastTimeoutRef.current = window.setTimeout(() => {
       setToastMessage(null);
+      toastTimeoutRef.current = null;
     }, 3000);
   };
 
-  const handleConfirmRead = (docId: string, title: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    setReadDocs(prev => ({ ...prev, [docId]: true }));
-    showToast(`Xác nhận đã đọc thành công: "${title}"`);
-  };
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
-  // Pre-configured list elements matching the exact visual spec of the template image
-  const cardMetadataMap: Record<string, UICardMetadata> = {
-    'doc-1': {
-      id: 'doc-1',
-      iconBg: 'bg-rose-50 text-red-650 hover:bg-rose-100',
-      iconColor: 'text-red-600',
-      icon: Shield,
-      badgeText: 'Bắt buộc đọc',
-      categoryKey: 'văn hóa'
-    },
-    'doc-2': {
-      id: 'doc-2',
-      iconBg: 'bg-orange-50 text-orange-650 hover:bg-orange-100',
-      iconColor: 'text-orange-500',
-      icon: FileText,
-      badgeText: 'Bắt buộc đọc',
-      categoryKey: 'nội quy'
-    },
-    'doc-4': {
-      id: 'doc-4',
-      iconBg: 'bg-emerald-50 text-emerald-650 hover:bg-emerald-100',
-      iconColor: 'text-emerald-500',
-      icon: Network,
-      badgeText: 'Xem tóm tắt',
-      categoryKey: 'sơ đồ'
-    },
-    'doc-10': { 
-      id: 'doc-10',
-      iconBg: 'bg-blue-50 text-blue-650 hover:bg-blue-100',
-      iconColor: 'text-blue-500',
-      icon: Lock,
-      badgeText: 'Xem tóm tắt',
-      categoryKey: 'phân quyền'
-    },
-    'doc-5': {
-      id: 'doc-5',
-      iconBg: 'bg-indigo-50 text-indigo-650 hover:bg-indigo-100',
-      iconColor: 'text-indigo-500',
-      icon: User,
-      badgeText: 'Xem tóm tắt',
-      hasSeen: true,
-      categoryKey: 'mô tả công việc'
-    },
-    'doc-3': {
-      id: 'doc-3',
-      iconBg: 'bg-pink-50 text-pink-650 hover:bg-pink-100',
-      iconColor: 'text-pink-600',
-      icon: Scale,
-      isUpdated: true,
-      badgeText: 'Xác nhận đã đọc',
-      categoryKey: 'quy chế'
-    },
-    'doc-6': {
-      id: 'doc-6',
-      iconBg: 'bg-sky-50 text-sky-650 hover:bg-sky-100',
-      iconColor: 'text-sky-600',
-      icon: Settings,
-      driveLink: 'https://drive.google.com/drive/folders/mrt_tech_training_fake',
-      categoryKey: 'sop gốc'
-    },
-    'doc-8': {
-      id: 'doc-8',
-      iconBg: 'bg-amber-50 text-amber-650 hover:bg-amber-100',
-      iconColor: 'text-amber-500',
-      icon: GraduationCap,
-      driveLink: 'https://drive.google.com/drive/folders/mrt_finance_forms_fake',
-      categoryKey: 'đào tạo'
-    }
-  };
+  const isOwner =
+    currentUser?.username === 'admin' ||
+    OWNER_ROLE_CODES.has(normalizeAccessCode(currentUser?.roleCode));
 
-  // Prepare standard list incorporating items
-  const processedDocs = HANDBOOK_DOCS.map(doc => {
-    const meta = cardMetadataMap[doc.id] || {
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPermissions = async () => {
+      if (!currentUser) {
+        setPermissions({ canCreate: false, canUpdate: false, canDelete: false, canApprove: false });
+        return;
+      }
+
+      try {
+        const allPermissions = await staffPermissionService.getAll();
+        if (cancelled) {
+          return;
+        }
+
+        if (isOwner) {
+          setPermissions({ canCreate: true, canUpdate: true, canDelete: true, canApprove: true });
+          return;
+        }
+
+        const roleCode = normalizeAccessCode(currentUser.roleCode);
+        const handbookPermRow = allPermissions.find(
+          (permission) =>
+            normalizeAccessCode(permission.roleCode) === roleCode &&
+            normalizeAccessCode(permission.module) === MODULE_CODE.SO_TAY,
+        );
+
+        setPermissions({
+          canCreate: !!handbookPermRow?.canCreate,
+          canUpdate: !!handbookPermRow?.canUpdate,
+          canDelete: !!handbookPermRow?.canDelete,
+          canApprove: !!handbookPermRow?.canApprove,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Không thể tải quyền sổ tay:', error);
+          setPermissions({ canCreate: false, canUpdate: false, canDelete: false, canApprove: false });
+        }
+      }
+    };
+
+    void loadPermissions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, currentUser?.roleCode, currentUser?.username, isOwner]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHandbookDocs = async () => {
+      setIsLoadingDocs(true);
+      setLoadErrorMessage(null);
+
+      try {
+        const docs = await handbookService.getAll();
+        if (cancelled) {
+          return;
+        }
+
+        const sortedDocs = [...docs].sort((a, b) => {
+          const orderA = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+          const orderB = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+          if (orderA !== orderB) {
+            return orderA - orderB;
+          }
+          return (a.title || '').localeCompare(b.title || '', 'vi');
+        });
+
+        setHandbookDocs(sortedDocs);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Không thể tải tài liệu sổ tay:', error);
+          setLoadErrorMessage('Không thể tải dữ liệu sổ tay. Vui lòng kiểm tra kết nối hoặc quyền truy cập.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingDocs(false);
+        }
+      }
+    };
+
+    void loadHandbookDocs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const resolveCardMetadata = (doc: HandbookDoc): UICardMetadata => {
+    const normalized = `${doc.category || ''} ${doc.title || ''} ${doc.categoryKey || ''}`.toLowerCase();
+    const base: UICardMetadata = {
       id: doc.id,
       iconBg: 'bg-slate-100 text-slate-650',
       iconColor: 'text-slate-500',
       icon: FileText,
-      badgeText: 'Xem tóm tắt',
-      categoryKey: 'khác'
+      badgeText: doc.requiredRead ? 'Bắt buộc đọc' : doc.isUpdated ? 'Xác nhận đã đọc' : 'Xem tóm tắt',
+      isUpdated: !!doc.isUpdated,
+      driveLink: doc.driveLink,
+      categoryKey: doc.categoryKey || 'khác',
     };
-    return {
+
+    if (normalized.includes('văn hóa')) {
+      return { ...base, iconBg: 'bg-rose-50 text-red-650 hover:bg-rose-100', iconColor: 'text-red-600', icon: Shield, categoryKey: 'văn hóa' };
+    }
+    if (normalized.includes('nội quy')) {
+      return { ...base, iconBg: 'bg-orange-50 text-orange-650 hover:bg-orange-100', iconColor: 'text-orange-500', icon: FileText, categoryKey: 'nội quy' };
+    }
+    if (normalized.includes('sơ đồ')) {
+      return { ...base, iconBg: 'bg-emerald-50 text-emerald-650 hover:bg-emerald-100', iconColor: 'text-emerald-500', icon: Network, categoryKey: 'sơ đồ' };
+    }
+    if (normalized.includes('phân quyền')) {
+      return { ...base, iconBg: 'bg-blue-50 text-blue-650 hover:bg-blue-100', iconColor: 'text-blue-500', icon: Lock, categoryKey: 'phân quyền' };
+    }
+    if (normalized.includes('mô tả công việc')) {
+      return { ...base, iconBg: 'bg-indigo-50 text-indigo-650 hover:bg-indigo-100', iconColor: 'text-indigo-500', icon: User, categoryKey: 'mô tả' };
+    }
+    if (normalized.includes('quy chế')) {
+      return { ...base, iconBg: 'bg-pink-50 text-pink-650 hover:bg-pink-100', iconColor: 'text-pink-600', icon: Scale, categoryKey: 'quy chế' };
+    }
+    if (normalized.includes('sop')) {
+      return { ...base, iconBg: 'bg-sky-50 text-sky-650 hover:bg-sky-100', iconColor: 'text-sky-600', icon: Settings, categoryKey: 'sop gốc' };
+    }
+    if (normalized.includes('đào tạo')) {
+      return { ...base, iconBg: 'bg-amber-50 text-amber-650 hover:bg-amber-100', iconColor: 'text-amber-500', icon: GraduationCap, categoryKey: 'đào tạo' };
+    }
+
+    return base;
+  };
+
+  const processedDocs = useMemo<HandbookDocWithMeta[]>(() => {
+    return handbookDocs.map((doc) => ({
       ...doc,
-      meta
-    };
-  });
+      meta: resolveCardMetadata(doc),
+    }));
+  }, [handbookDocs]);
+
+  const currentReadKey = currentUser?.id || currentUser?.username || '';
+
+  const readDocs = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    if (!currentReadKey) {
+      return map;
+    }
+
+    for (const doc of processedDocs) {
+      map[doc.id] = !!doc.readAudits?.[currentReadKey];
+    }
+    return map;
+  }, [processedDocs, currentReadKey]);
+
+  const canConfirmRead = permissions.canUpdate || permissions.canApprove;
 
   // Filter handbook topics based on Search Term, Pills Selected Filter, and Category selection shorthand
   const filteredDocs = processedDocs.filter(doc => {
@@ -170,16 +316,166 @@ export default function HandbookView() {
 
     // 3. Pills filter
     if (selectedFilter === 'required') {
-      return doc.meta.badgeText === 'Bắt buộc đọc';
+      return !!doc.requiredRead;
     }
     if (selectedFilter === 'updated') {
-      return doc.meta.isUpdated;
+      return !!doc.isUpdated;
     }
 
     return true;
   });
 
   const activeDoc = processedDocs.find(doc => doc.id === activeDocId);
+  const activeReadAudit = activeDoc && currentReadKey ? activeDoc.readAudits?.[currentReadKey] : undefined;
+
+  const openCreateEditor = () => {
+    setEditingDocId(null);
+    setFormState({
+      title: '',
+      category: '',
+      summary: '',
+      content: '',
+      requiredRead: false,
+      isUpdated: false,
+      driveLink: '',
+      categoryKey: '',
+    });
+    setIsEditorOpen(true);
+  };
+
+  const openEditEditor = (doc: HandbookDocWithMeta, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    setEditingDocId(doc.id);
+    setFormState({
+      title: doc.title || '',
+      category: doc.category || '',
+      summary: doc.summary || '',
+      content: doc.content || '',
+      requiredRead: !!doc.requiredRead,
+      isUpdated: !!doc.isUpdated,
+      driveLink: doc.driveLink || '',
+      categoryKey: doc.categoryKey || doc.meta.categoryKey || '',
+    });
+    setIsEditorOpen(true);
+  };
+
+  const handleDeleteDoc = async (doc: HandbookDocWithMeta, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (!permissions.canDelete) {
+      showToast('Bạn không có quyền xóa tài liệu.');
+      return;
+    }
+
+    const isConfirmed = window.confirm(`Bạn có chắc muốn xóa tài liệu "${doc.title}"?`);
+    if (!isConfirmed) {
+      return;
+    }
+
+    try {
+      await handbookService.delete(doc.id);
+      setHandbookDocs((prev) => prev.filter((item) => item.id !== doc.id));
+      if (activeDocId === doc.id) {
+        setActiveDocId(null);
+      }
+      showToast(`Đã xóa tài liệu: "${doc.title}"`);
+    } catch (error) {
+      console.error('Không thể xóa tài liệu:', error);
+      showToast('Xóa tài liệu thất bại. Vui lòng thử lại.');
+    }
+  };
+
+  const handleSaveDoc = async () => {
+    if (!formState.title.trim() || !formState.category.trim() || !formState.summary.trim() || !formState.content.trim()) {
+      showToast('Vui lòng nhập đầy đủ tiêu đề, danh mục, tóm tắt và nội dung.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const payload: Partial<HandbookDoc> = {
+      title: formState.title.trim(),
+      category: formState.category.trim(),
+      summary: formState.summary.trim(),
+      content: formState.content.trim(),
+      requiredRead: formState.requiredRead,
+      isUpdated: formState.isUpdated,
+      driveLink: formState.driveLink.trim() || undefined,
+      categoryKey: formState.categoryKey.trim() || undefined,
+      updatedAt: nowIso,
+    };
+
+    setIsSavingDoc(true);
+    try {
+      if (editingDocId) {
+        if (!permissions.canUpdate) {
+          showToast('Bạn không có quyền cập nhật tài liệu.');
+          return;
+        }
+
+        const updatedDoc = await handbookService.update(editingDocId, payload);
+        setHandbookDocs((prev) => prev.map((doc) => (doc.id === editingDocId ? { ...doc, ...updatedDoc } : doc)));
+        showToast('Cập nhật tài liệu thành công.');
+      } else {
+        if (!permissions.canCreate) {
+          showToast('Bạn không có quyền thêm tài liệu.');
+          return;
+        }
+
+        const createdDoc = await handbookService.create({
+          ...payload,
+          createdAt: nowIso,
+          sortOrder: handbookDocs.length + 1,
+          readAudits: {},
+        });
+        setHandbookDocs((prev) => [...prev, createdDoc]);
+        showToast('Thêm tài liệu thành công.');
+      }
+
+      setIsEditorOpen(false);
+    } catch (error) {
+      console.error('Không thể lưu tài liệu sổ tay:', error);
+      showToast('Lưu tài liệu thất bại. Vui lòng thử lại.');
+    } finally {
+      setIsSavingDoc(false);
+    }
+  };
+
+  const handleConfirmRead = async (doc: HandbookDocWithMeta, event?: React.MouseEvent): Promise<boolean> => {
+    event?.stopPropagation();
+
+    if (!canConfirmRead) {
+      showToast('Bạn không có quyền xác nhận đã đọc.');
+      return false;
+    }
+
+    if (!currentReadKey || !currentUser) {
+      showToast('Không xác định được người dùng hiện tại.');
+      return false;
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextReadAudits = {
+      ...(doc.readAudits || {}),
+      [currentReadKey]: {
+        username: currentUser.username,
+        fullName: currentUser.fullName,
+        readAt: nowIso,
+      },
+    };
+
+    try {
+      const updatedDoc = await handbookService.update(doc.id, {
+        readAudits: nextReadAudits,
+        updatedAt: nowIso,
+      });
+      setHandbookDocs((prev) => prev.map((item) => (item.id === doc.id ? { ...item, ...updatedDoc, readAudits: nextReadAudits } : item)));
+      showToast(`Xác nhận đã đọc thành công: "${doc.title}"`);
+      return true;
+    } catch (error) {
+      console.error('Không thể xác nhận đã đọc:', error);
+      showToast('Xác nhận đã đọc thất bại. Vui lòng thử lại.');
+      return false;
+    }
+  };
 
   // Formatter for rendering doc markup
   const renderFormattedContent = (content: string) => {
@@ -483,6 +779,16 @@ export default function HandbookView() {
                       </button>
                     )}
                   </div>
+                  {permissions.canCreate && (
+                    <button
+                      type="button"
+                      onClick={openCreateEditor}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 bg-[#C21A1A] hover:bg-[#A81515] text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-colors cursor-pointer shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Thêm tài liệu</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -556,6 +862,18 @@ export default function HandbookView() {
                 </div>
               )}
 
+              {loadErrorMessage && (
+                <div className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold">
+                  {loadErrorMessage}
+                </div>
+              )}
+
+              {isLoadingDocs && (
+                <div className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-500 text-xs font-bold">
+                  Đang tải dữ liệu sổ tay...
+                </div>
+              )}
+
               {/* Grid of SOP/Guidelines Adapted beautifully to desktop three-column full width web view */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pb-3">
                 {filteredDocs.length === 0 ? (
@@ -597,8 +915,31 @@ export default function HandbookView() {
                               </div>
                             </div>
 
-                            {/* Arrow utility decoration */}
-                            <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[#C21A1A] group-hover:translate-x-1 transition-all shrink-0" />
+                            <div className="flex items-center gap-1.5">
+                              {permissions.canUpdate && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => openEditEditor(doc, event)}
+                                  className="p-1 rounded bg-slate-50 border border-slate-200 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                                  title="Sửa tài liệu"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {permissions.canDelete && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    void handleDeleteDoc(doc, event);
+                                  }}
+                                  className="p-1 rounded bg-slate-50 border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                  title="Xóa tài liệu"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[#C21A1A] group-hover:translate-x-1 transition-all shrink-0" />
+                            </div>
                           </div>
 
                           {/* Central descriptions text */}
@@ -639,13 +980,19 @@ export default function HandbookView() {
                                 <span className="text-red-600">🔖</span>
                                 <span>Bắt buộc đọc</span>
                               </span>
-                            ) : doc.meta.badgeText === 'Xác nhận đã đọc' && !isDocRead ? (
+                            ) : doc.meta.badgeText === 'Xác nhận đã đọc' && !isDocRead && canConfirmRead ? (
                               <button
-                                onClick={(e) => handleConfirmRead(doc.id, doc.title, e)}
+                                onClick={(e) => {
+                                  void handleConfirmRead(doc, e);
+                                }}
                                 className="px-2.5 py-1 bg-[#1E40AF] hover:bg-[#1E40AF]/90 text-white font-black text-[9px] tracking-wider rounded-lg uppercase whitespace-nowrap cursor-pointer transition-all active:scale-95 shadow-sm"
                               >
                                 Xác nhận đã đọc
                               </button>
+                            ) : doc.meta.badgeText === 'Xác nhận đã đọc' && !isDocRead && !canConfirmRead ? (
+                              <span className="px-2 py-1 bg-slate-100 border border-slate-200 rounded-lg text-slate-500 font-bold text-[9px]">
+                                Chưa có quyền xác nhận
+                              </span>
                             ) : doc.meta.driveLink ? (
                               <span className="px-2 py-1 bg-[#F1F5F9] border border-slate-250 hover:bg-slate-200 rounded-lg text-slate-600 font-bold text-[9px] tracking-tight inline-flex items-center gap-1 whitespace-nowrap transition-colors">
                                 Xem Drive gốc
@@ -699,6 +1046,28 @@ export default function HandbookView() {
                   <span className="text-xs bg-white border border-slate-200 px-2.5 py-1 rounded-xl text-slate-500 font-extrabold uppercase tracking-wide">
                     {activeDoc?.category}
                   </span>
+                  {activeDoc && permissions.canUpdate && (
+                    <button
+                      type="button"
+                      onClick={() => openEditEditor(activeDoc)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-xl text-slate-600 text-[10px] font-black hover:bg-blue-50 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Sửa</span>
+                    </button>
+                  )}
+                  {activeDoc && permissions.canDelete && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleDeleteDoc(activeDoc);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-xl text-slate-600 text-[10px] font-black hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Xóa</span>
+                    </button>
+                  )}
                   {activeDoc && readDocs[activeDoc.id] && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 border border-emerald-150 rounded-xl text-emerald-600 text-xs font-black uppercase">
                       <Check className="w-3.5 h-3.5 stroke-[3]" />
@@ -769,6 +1138,9 @@ export default function HandbookView() {
                         <p className="text-[11px] text-slate-400 leading-relaxed mt-1 font-medium">
                           Bằng việc nhấn hoàn tất đọc, bạn tự nguyện xác nhận hiểu rõ quy trình tóm tắt và thực hành đúng tiêu chuẩn tại cửa hàng.
                         </p>
+                        <p className="text-[10px] text-slate-500 mt-1 font-semibold">
+                          Lần xác nhận gần nhất của bạn: {formatDateTime(activeReadAudit?.readAt)}
+                        </p>
                       </div>
 
                       {activeDoc?.meta.driveLink && (
@@ -792,12 +1164,18 @@ export default function HandbookView() {
                     {activeDoc && (
                       <button
                         onClick={() => {
-                          setReadDocs(prev => ({ ...prev, [activeDoc.id]: true }));
-                          showToast(`Xác nhận đã đọc thành công: "${activeDoc.title}"`);
-                          setActiveDocId(null);
+                          void (async () => {
+                            const ok = await handleConfirmRead(activeDoc);
+                            if (ok) {
+                              setActiveDocId(null);
+                            }
+                          })();
                         }}
+                        disabled={!canConfirmRead}
                         className={`w-full py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md active:scale-98 ${
-                          readDocs[activeDoc.id]
+                          !canConfirmRead
+                            ? 'bg-slate-300 text-white cursor-not-allowed'
+                            : readDocs[activeDoc.id]
                             ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                             : 'bg-[#C21A1A] hover:bg-[#A81515] text-white'
                         }`}
@@ -830,6 +1208,127 @@ export default function HandbookView() {
         </div>
 
       </div>
+
+      {isEditorOpen && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4 text-left">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                {editingDocId ? 'Cập nhật tài liệu sổ tay' : 'Thêm tài liệu sổ tay'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsEditorOpen(false)}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">Tiêu đề</label>
+                <input
+                  type="text"
+                  value={formState.title}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, title: event.target.value }))}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-[#C21A1A]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">Danh mục</label>
+                <input
+                  type="text"
+                  value={formState.category}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, category: event.target.value }))}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-[#C21A1A]"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">Nhóm lọc</label>
+                <input
+                  type="text"
+                  value={formState.categoryKey}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, categoryKey: event.target.value }))}
+                  placeholder="Ví dụ: văn hóa, quy chế, đào tạo"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-[#C21A1A]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">Link Drive (nếu có)</label>
+                <input
+                  type="text"
+                  value={formState.driveLink}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, driveLink: event.target.value }))}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-[#C21A1A]"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">Tóm tắt</label>
+              <textarea
+                value={formState.summary}
+                onChange={(event) => setFormState((prev) => ({ ...prev, summary: event.target.value }))}
+                rows={3}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-[#C21A1A]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">Nội dung</label>
+              <textarea
+                value={formState.content}
+                onChange={(event) => setFormState((prev) => ({ ...prev, content: event.target.value }))}
+                rows={10}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-[#C21A1A]"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={formState.requiredRead}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, requiredRead: event.target.checked }))}
+                />
+                Bắt buộc đọc
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={formState.isUpdated}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, isUpdated: event.target.checked }))}
+                />
+                Đánh dấu mới cập nhật
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsEditorOpen(false)}
+                className="px-3 py-2 text-xs font-black text-slate-500 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleSaveDoc();
+                }}
+                disabled={isSavingDoc}
+                className="px-3 py-2 text-xs font-black text-white rounded-xl bg-[#C21A1A] hover:bg-[#A81515] disabled:opacity-60 cursor-pointer"
+              >
+                {isSavingDoc ? 'Đang lưu...' : 'Lưu tài liệu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
